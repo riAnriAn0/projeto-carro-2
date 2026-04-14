@@ -1,0 +1,3 @@
+opencv-python
+pigpio
+tflite-runtime

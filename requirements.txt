@@ -1,3 +1,5 @@
 opencv-python
 pigpio
-tflite-runtime
+tensorflow
+ultralytics
+# tflite-runtime

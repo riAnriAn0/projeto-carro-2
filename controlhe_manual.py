@@ -7,7 +7,7 @@ import numpy as np
 import time
 import socket
 import config
-# import atuadores
+import atuadores
 
 if os.name == 'nt':
     import msvcrt
@@ -16,9 +16,6 @@ else:
     import tty
     import select
 
-# =========================
-# TECLADO NON-BLOCKING
-# =========================
 class NonBlockingKeyboard:
     def __init__(self) -> None:
         self.is_windows: bool = (os.name == 'nt')
@@ -26,15 +23,12 @@ class NonBlockingKeyboard:
 
     def __enter__(self):
         if not self.is_windows:
-            # Salva as configurações atuais do terminal (Linux/macOS)
             self.old_settings = termios.tcgetattr(sys.stdin)
-            # Coloca o terminal em modo "cbreak", permitindo leitura caractere a caractere
             tty.setcbreak(sys.stdin.fileno())
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         if not self.is_windows and self.old_settings:
-            # Restaura as configurações originais ao sair do bloco 'with'
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
 
     def get_char(self) -> Optional[str]:
@@ -43,15 +37,12 @@ class NonBlockingKeyboard:
             # Lógica para Windows
             if msvcrt.kbhit():
                 try:
-                    # getch() retorna bytes, precisamos decodificar
                     char = msvcrt.getch()
                     return char.decode('utf-8').lower()
                 except (UnicodeDecodeError, AttributeError):
                     return None
             return None
         else:
-            # Lógica para Linux/macOS usando select para não bloquear o script
-            # Verifica se há dados prontos para leitura no stdin
             if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
                 return sys.stdin.read(1).lower()
             return None
@@ -72,10 +63,7 @@ def control_speed(current_speed: int, increment: int) -> int:
     elif current_speed < 0 and current_speed > -config.MIN_SPEED and anterior_speed < current_speed:
         return 0
     return current_speed
-    
-# =========================
-# FUNÇÃO PRINCIPAL
-# =========================
+
 def main() -> None:
     cap = cv2.VideoCapture(0)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -105,35 +93,31 @@ def main() -> None:
                     elif key == 'p': 
                         paused: bool = not paused
                     
-                    # Controle de Velocidade (Direto no valor da velocidade)
                     elif key == 'w': 
                         incremento = config.SPEED_INCREMENT
                     elif key == 's': 
                         incremento = -1 * config.SPEED_INCREMENT
                     
-                    # Controle do Servo
                     elif key == 'a': 
                         servo_angle += config.SERVO_INCREMENT
                     elif key == 'd': 
                         servo_angle -= config.SERVO_INCREMENT
-                    
-                    # Brilho
+                        
+                    #controlhe de brilho
                     elif key == '+': 
                         brightness_value += 10
                     elif key == '-': 
                         brightness_value -= 10
                     
-                    # Reset (X para parar o motor e centralizar o servo)
                     elif key == 'x': 
                         motor_speed = 0
                         servo_angle: int = config.NEUTRAL_ANGLE
 
-                    # Aplicação de limites e envio de comandos de hardware
                     motor_speed = control_speed(motor_speed, incremento)
-                    # atuadores.set_motor_speed(motor_speed)
+                    atuadores.set_motor_speed(motor_speed)
 
                     servo_angle = np.clip(servo_angle, config.MIN_ANGLE, config.MAX_ANGLE)
-                    # atuadores.set_servo_angle(servo_angle)
+                    atuadores.set_servo_angle(servo_angle)
 
                 # Limite de brilho
                 brightness_value = np.clip(brightness_value, -255, 255)
@@ -160,12 +144,12 @@ def main() -> None:
                 print(f"Vel: {motor_speed:.1f} | Angulo: {servo_angle:.1f} | Brilho: {brightness_value}", end='\r')
 
                 # # Streaming UDP
-                # try: 
-                #     encode_param: list[int] = [int(cv2.IMWRITE_JPEG_QUALITY), config.JPEG_QUALITY] 
-                #     _, buffer = cv2.imencode('.jpg', adjusted_frame, encode_param) 
-                #     sock.sendto(buffer, serve_address) 
-                # except Exception: 
-                #     pass
+                try: 
+                    encode_param: list[int] = [int(cv2.IMWRITE_JPEG_QUALITY), config.JPEG_QUALITY] 
+                    _, buffer = cv2.imencode('.jpg', adjusted_frame, encode_param) 
+                    sock.sendto(buffer, serve_address) 
+                except Exception: 
+                    pass
 
         except KeyboardInterrupt:
             print("\nInterrompido pelo usuário.")

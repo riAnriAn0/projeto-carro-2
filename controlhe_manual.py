@@ -1,12 +1,20 @@
 import os
+import sys
+from typing import Optional
 import typing
 import cv2
 import numpy as np
 import time
 import socket
 import config
-import sys, select, tty, termios
-import atuadores
+# import atuadores
+
+if os.name == 'nt':
+    import msvcrt
+else:
+    import termios
+    import tty
+    import select
 
 # =========================
 # TECLADO NON-BLOCKING
@@ -14,43 +22,64 @@ import atuadores
 class NonBlockingKeyboard:
     def __init__(self) -> None:
         self.is_windows: bool = (os.name == 'nt')
+        self.old_settings = None
 
-    def __enter__(self) -> Self:
+    def __enter__(self):
         if not self.is_windows:
-            # Configuração específica para Linux/macOS
+            # Salva as configurações atuais do terminal (Linux/macOS)
             self.old_settings = termios.tcgetattr(sys.stdin)
+            # Coloca o terminal em modo "cbreak", permitindo leitura caractere a caractere
             tty.setcbreak(sys.stdin.fileno())
         return self
 
-    def __exit__(self, type, value, traceback) -> None:
-        if not self.is_windows:
-            # Restaura as configurações originais do terminal no Unix
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        if not self.is_windows and self.old_settings:
+            # Restaura as configurações originais ao sair do bloco 'with'
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
 
-    def get_char(self):
+    def get_char(self) -> Optional[str]:
+        """Retorna o caractere pressionado ou None se nenhuma tecla foi tocada."""
         if self.is_windows:
-            # Lógica para Windows usando msvcrt
+            # Lógica para Windows
             if msvcrt.kbhit():
-                # Retorna o caractere decodificado (ex: 'w', 's', 'a', 'd')
-                char = msvcrt.getch()
                 try:
+                    # getch() retorna bytes, precisamos decodificar
+                    char = msvcrt.getch()
                     return char.decode('utf-8').lower()
-                except UnicodeDecodeError:
+                except (UnicodeDecodeError, AttributeError):
                     return None
             return None
         else:
-            # Lógica original para Linux/macOS
+            # Lógica para Linux/macOS usando select para não bloquear o script
+            # Verifica se há dados prontos para leitura no stdin
             if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
                 return sys.stdin.read(1).lower()
             return None
+        
+def control_speed(current_speed: int, increment: int) -> int:
+    anterior_speed = current_speed
+    current_speed += increment
 
+    current_speed = np.clip(current_speed, -config.MAX_SPEED, config.MAX_SPEED)
+    if current_speed == 0:
+        return 0
+    elif current_speed > 0 and current_speed < config.MIN_SPEED and anterior_speed < current_speed:
+        return current_speed + config.MIN_SPEED
+    elif current_speed > 0 and current_speed < config.MIN_SPEED and anterior_speed > current_speed:
+        return 0
+    elif current_speed < 0 and current_speed > -config.MIN_SPEED and anterior_speed > current_speed:
+        return current_speed - config.MIN_SPEED
+    elif current_speed < 0 and current_speed > -config.MIN_SPEED and anterior_speed < current_speed:
+        return 0
+    return current_speed
+    
 # =========================
 # FUNÇÃO PRINCIPAL
 # =========================
 def main() -> None:
     cap = cv2.VideoCapture(0)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    serve_address: tuple[typing.Literal[' 10.42.0.104'], typing.Literal[9999]] = (config.UDP_HOST, config.UDP_PORT)
+    serve_address: tuple[typing.Literal['10.42.0.104'], typing.Literal[9999]] = (config.UDP_HOST, config.UDP_PORT)
 
     if not cap.isOpened():
         print("Erro ao abrir o arquivo de vídeo.")
@@ -59,7 +88,8 @@ def main() -> None:
     # Inicialização de variáveis
     brightness_value: int = config.INITIAL_BRIGHTNESS
     servo_angle: int = config.NEUTRAL_ANGLE
-    motor_speed: int = config.MIN_SPEED # Começa na velocidade mínima ou zero
+    motor_speed: int = 0
+    incremento: int = 0
     
     paused = False
     kbd = NonBlockingKeyboard()
@@ -77,9 +107,9 @@ def main() -> None:
                     
                     # Controle de Velocidade (Direto no valor da velocidade)
                     elif key == 'w': 
-                        motor_speed += config.SPEED_INCREMENT
+                        incremento = config.SPEED_INCREMENT
                     elif key == 's': 
-                        motor_speed -= config.SPEED_INCREMENT
+                        incremento = -1 * config.SPEED_INCREMENT
                     
                     # Controle do Servo
                     elif key == 'a': 
@@ -93,20 +123,17 @@ def main() -> None:
                     elif key == '-': 
                         brightness_value -= 10
                     
-                    # Reset (Z)
-                    elif key == 'z': 
+                    # Reset (X para parar o motor e centralizar o servo)
+                    elif key == 'x': 
                         motor_speed = 0
                         servo_angle: int = config.NEUTRAL_ANGLE
 
                     # Aplicação de limites e envio de comandos de hardware
-                    if motor_speed == 0:
-                        atuadores.set_motor_speed(0)
-                    else:
-                        motor_speed = np.clip(motor_speed, -config.MAX_SPEED, config.MAX_SPEED)
-                        atuadores.set_motor_speed(motor_speed)
+                    motor_speed = control_speed(motor_speed, incremento)
+                    # atuadores.set_motor_speed(motor_speed)
 
                     servo_angle = np.clip(servo_angle, config.MIN_ANGLE, config.MAX_ANGLE)
-                    atuadores.set_servo_angle(servo_angle)
+                    # atuadores.set_servo_angle(servo_angle)
 
                 # Limite de brilho
                 brightness_value = np.clip(brightness_value, -255, 255)
@@ -132,13 +159,13 @@ def main() -> None:
                 # Feedback no terminal
                 print(f"Vel: {motor_speed:.1f} | Angulo: {servo_angle:.1f} | Brilho: {brightness_value}", end='\r')
 
-                # Streaming UDP
-                try: 
-                    encode_param: list[int] = [int(cv2.IMWRITE_JPEG_QUALITY), config.JPEG_QUALITY] 
-                    _, buffer = cv2.imencode('.jpg', adjusted_frame, encode_param) 
-                    sock.sendto(buffer, serve_address) 
-                except Exception: 
-                    pass
+                # # Streaming UDP
+                # try: 
+                #     encode_param: list[int] = [int(cv2.IMWRITE_JPEG_QUALITY), config.JPEG_QUALITY] 
+                #     _, buffer = cv2.imencode('.jpg', adjusted_frame, encode_param) 
+                #     sock.sendto(buffer, serve_address) 
+                # except Exception: 
+                #     pass
 
         except KeyboardInterrupt:
             print("\nInterrompido pelo usuário.")
@@ -153,14 +180,10 @@ def main() -> None:
             except Exception as e:
                 print(f"Erro ao parar hardware: {e}")
             
-            # Liberação de Recursos
             cap.release()
             cv2.destroyAllWindows()
             sock.close()
-            
-            # SE estiver usando RPi.GPIO, descomente a linha abaixo:
-            # GPIO.cleanup() 
-            
+
             print("Sistema encerrado com segurança.")
 
 

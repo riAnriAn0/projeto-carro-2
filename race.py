@@ -209,7 +209,7 @@ def main(args):
                 # servo_angle = (box_x - img_center_x) * FATOR_GIRO
                 # set_servo_angle(NEUTRAL_ANGLE + (-1 * servo_angle))
                                 
-                print(f"Detecção: Conf={max_confidence:.2f}, Dist={distance:.1f}, Servo Angle={servo_angle:.1f}, Vel={motor_speed:.1f}")
+                print(f"Detecção: Conf={max_confidence:.2f}, Dist={distance:.1f}, Servo Angle={servo_angle:.1f}, Vel={motor_speed:.1f}", end='\r')
 
                 # Desenhar Bounding Box
                 x1, y1 = int(box_x - (bw * w / 2)), int(box_y - (bh * h / 2))

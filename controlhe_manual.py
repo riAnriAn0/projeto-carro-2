@@ -8,13 +8,9 @@ import time
 import socket
 import config
 import atuadores
-
-if os.name == 'nt':
-    import msvcrt
-else:
-    import termios
-    import tty
-    import select
+import termios
+import tty
+import select
 
 class NonBlockingKeyboard:
     def __init__(self) -> None:
@@ -32,20 +28,9 @@ class NonBlockingKeyboard:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
 
     def get_char(self) -> Optional[str]:
-        """Retorna o caractere pressionado ou None se nenhuma tecla foi tocada."""
-        if self.is_windows:
-            # Lógica para Windows
-            if msvcrt.kbhit():
-                try:
-                    char = msvcrt.getch()
-                    return char.decode('utf-8').lower()
-                except (UnicodeDecodeError, AttributeError):
-                    return None
-            return None
-        else:
-            if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
-                return sys.stdin.read(1).lower()
-            return None
+        if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+            return sys.stdin.read(1).lower()
+        return None
         
 def control_speed(current_speed: int, increment: int) -> int:
     anterior_speed = current_speed
